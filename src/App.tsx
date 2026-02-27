@@ -589,20 +589,13 @@ Return only the JSON object, no other text.`;
                   </div>
                 </div>
 
-                {/* Technical Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
-                    <span className="block text-[10px] uppercase tracking-widest text-stone-400 font-bold mb-1">Medium</span>
-                    <span className="text-sm text-stone-700 font-medium">{analysis.medium}</span>
-                  </div>
-                  <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
-                    <span className="block text-[10px] uppercase tracking-widest text-stone-400 font-bold mb-1">Dimensions</span>
-                    <span className="text-sm text-stone-700 font-medium">{analysis.dimensions}</span>
-                  </div>
-                  <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
-                    <span className="block text-[10px] uppercase tracking-widest text-stone-400 font-bold mb-1">Location</span>
-                    <span className="text-sm text-stone-700 font-medium">{analysis.location}</span>
-                  </div>
+                {/* Technical Details */}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-stone-500">
+                  <span>{analysis.medium}</span>
+                  <span className="text-stone-300">·</span>
+                  <span>{analysis.dimensions}</span>
+                  <span className="text-stone-300">·</span>
+                  <span>{analysis.location}</span>
                 </div>
 
                 {/* Description */}
