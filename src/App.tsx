@@ -1,9 +1,13 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
-import { Camera, RefreshCw, Info, ArrowLeft, Sparkles, Loader2, AlertCircle, History, Trash2 } from 'lucide-react';
+import { Camera, RefreshCw, Info, ArrowLeft, Sparkles, Loader2, AlertCircle, History, Trash2, Settings, Eye, EyeOff, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import { PaintingInfo, getAllHistory, saveHistoryItem, clearAllHistory, deleteHistoryItem } from './db';
+
+const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const DEFAULT_MODEL = 'google/gemini-2.0-flash-001';
+const API_KEY_STORAGE_KEY = 'museum_guide_openrouter_key';
+const MODEL_STORAGE_KEY = 'museum_guide_openrouter_model';
 
 // --- App Component ---
 export default function App() {
@@ -15,6 +19,12 @@ export default function App() {
   const [loadingStatus, setLoadingStatus] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [deepError, setDeepError] = useState<boolean>(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem(API_KEY_STORAGE_KEY) || '');
+  const [model, setModel] = useState(() => localStorage.getItem(MODEL_STORAGE_KEY) || DEFAULT_MODEL);
+  const [settingsApiKey, setSettingsApiKey] = useState('');
+  const [settingsModel, setSettingsModel] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
   
   // Load history from IndexedDB on mount
   useEffect(() => {
@@ -43,8 +53,29 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
+  const openSettings = () => {
+    setSettingsApiKey(apiKey);
+    setSettingsModel(model);
+    setShowApiKey(false);
+    setShowSettings(true);
+  };
+
+  const saveSettings = () => {
+    const trimmedKey = settingsApiKey.trim();
+    const trimmedModel = settingsModel.trim() || DEFAULT_MODEL;
+    localStorage.setItem(API_KEY_STORAGE_KEY, trimmedKey);
+    localStorage.setItem(MODEL_STORAGE_KEY, trimmedModel);
+    setApiKey(trimmedKey);
+    setModel(trimmedModel);
+    setShowSettings(false);
+  };
+
   // --- Camera Logic ---
   const startCamera = async () => {
+    if (!apiKey) {
+      openSettings();
+      return;
+    }
     try {
       setError(null);
       const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -116,23 +147,13 @@ export default function App() {
     }
   };
 
-  // --- Gemini Logic ---
+  // --- OpenRouter API Logic ---
   const analyzeImage = async (base64Image: string) => {
     setMode('analyzing');
     setIsDeepLoading(true);
     setDeepError(false);
     setLoadingStatus('Uploading image...');
-    
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
-    const model = "gemini-3-flash-preview";
-    const imagePart = {
-      inlineData: {
-        mimeType: "image/jpeg",
-        data: base64Image.split(',')[1],
-      },
-    };
 
-    // Helper for timeout
     const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> => {
       return Promise.race([
         promise,
@@ -140,35 +161,71 @@ export default function App() {
       ]);
     };
 
+    const extractJSON = (text: string): string => {
+      const match = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (match) return match[1].trim();
+      return text.trim();
+    };
+
+    const callOpenRouter = async (prompt: string): Promise<string> => {
+      const response = await fetch(OPENROUTER_API_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': window.location.origin,
+          'X-Title': 'Museum Guide AI',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'image_url',
+                  image_url: { url: base64Image }
+                },
+                {
+                  type: 'text',
+                  text: prompt
+                }
+              ]
+            }
+          ],
+          response_format: { type: 'json_object' }
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        if (response.status === 401 || response.status === 403) throw new Error('INVALID_API_KEY');
+        if (response.status === 429) throw new Error('429');
+        throw new Error(errorData?.error?.message || `API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      return data.choices?.[0]?.message?.content || '{}';
+    };
+
     try {
       // PHASE 1: Basic Identification (Optimized for speed)
       setLoadingStatus('Identifying artwork...');
-      const basicPrompt = "Identify this painting and provide basic details: Name, Artist, Year, Medium, Dimensions, Location, and a brief Description.";
-      
-      const basicResponse = await withTimeout(ai.models.generateContent({
-        model,
-        contents: [{ parts: [imagePart, { text: basicPrompt }] }],
-        config: {
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              name: { type: Type.STRING, description: "Name of the painting" },
-              artist: { type: Type.STRING, description: "Name of the artist" },
-              year: { type: Type.STRING, description: "Year or period it was painted" },
-              medium: { type: Type.STRING, description: "Materials used" },
-              dimensions: { type: Type.STRING, description: "Physical dimensions" },
-              location: { type: Type.STRING, description: "Museum or collection" },
-              description: { type: Type.STRING, description: "A brief, engaging overview" }
-            },
-            required: ["name", "artist", "year", "medium", "dimensions", "location", "description"]
-          }
-        }
-      }), 20000); // 20s timeout for first phase
+      const basicPrompt = `Identify this painting and provide basic details. You must respond with a JSON object containing exactly these fields:
+- "name" (string): Name of the painting
+- "artist" (string): Name of the artist
+- "year" (string): Year or period it was painted
+- "medium" (string): Materials used (e.g., Oil on canvas)
+- "dimensions" (string): Physical dimensions if known
+- "location" (string): Museum or collection where it is housed
+- "description" (string): A brief, engaging overview of the painting
+
+Return only the JSON object, no other text.`;
+
+      const basicText = await withTimeout(callOpenRouter(basicPrompt), 30000);
 
       setLoadingStatus('Parsing details...');
-      const basicResult = JSON.parse(basicResponse.text || '{}');
+      const basicResult = JSON.parse(extractJSON(basicText));
       
       const newEntry: PaintingInfo = {
         ...basicResult,
@@ -182,33 +239,18 @@ export default function App() {
       await saveHistoryItem(newEntry);
       setMode('result');
 
-      // PHASE 2: Deep Analysis (Background, more reasoning allowed)
+      // PHASE 2: Deep Analysis (Background, more detail)
       try {
-        const deepPrompt = `Provide a deep analysis for the painting "${basicResult.name}" by ${basicResult.artist}. Include Technique, Symbolism, 5-7 specific Details to Look For, and Historical Context.`;
-        
-        const deepResponse = await withTimeout(ai.models.generateContent({
-          model,
-          contents: [{ parts: [imagePart, { text: deepPrompt }] }],
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                technique: { type: Type.STRING, description: "Analysis of style/brushwork" },
-                symbolism: { type: Type.STRING, description: "Hidden meanings" },
-                detailsToLookFor: { 
-                  type: Type.ARRAY, 
-                  items: { type: Type.STRING },
-                  description: "5-7 specific details to observe" 
-                },
-                historicalContext: { type: Type.STRING, description: "History or story behind the work" }
-              },
-              required: ["technique", "symbolism", "detailsToLookFor", "historicalContext"]
-            }
-          }
-        }), 30000); // 30s timeout for deep phase
+        const deepPrompt = `Provide a deep analysis for the painting "${basicResult.name}" by ${basicResult.artist}. You must respond with a JSON object containing exactly these fields:
+- "technique" (string): Detailed analysis of the artist's style, brushwork, and artistic methods
+- "symbolism" (string): Hidden meanings and symbolic elements in the painting
+- "detailsToLookFor" (array of strings): 5-7 specific details a viewer should observe in the painting
+- "historicalContext" (string): The history, story, and significance behind the work
 
-        const deepResult = JSON.parse(deepResponse.text || '{}');
+Return only the JSON object, no other text.`;
+        
+        const deepText = await withTimeout(callOpenRouter(deepPrompt), 45000);
+        const deepResult = JSON.parse(extractJSON(deepText));
         const updatedEntry = { ...newEntry, ...deepResult };
         
         setAnalysis(updatedEntry);
@@ -225,6 +267,8 @@ export default function App() {
       console.error("Analysis error:", err);
       if (err.message === 'TIMEOUT') {
         setError("The museum archives are taking too long to respond. Please try again with a clearer photo or better connection.");
+      } else if (err.message === 'INVALID_API_KEY') {
+        setError("Invalid API key. Please check your OpenRouter API key in Settings.");
       } else {
         const isQuotaError = err?.message?.includes('429') || err?.message?.includes('quota');
         setError(isQuotaError ? "Museum archives are busy (Rate limit). Please wait a moment and try again." : "Failed to identify the painting. Please try again with a clearer photo.");
@@ -252,6 +296,13 @@ export default function App() {
           <h1 className="font-serif text-xl font-semibold tracking-tight">Museum Guide AI</h1>
         </div>
         <div className="flex items-center gap-4">
+          <button 
+            onClick={openSettings}
+            className="text-stone-500 hover:text-stone-900 transition-colors"
+            title="Settings"
+          >
+            <Settings className="w-5 h-5" />
+          </button>
           {mode === 'landing' && history.length > 0 && (
             <button 
               onClick={() => setMode('history')}
@@ -291,6 +342,20 @@ export default function App() {
                     Point your camera at any artwork to uncover its history, secrets, and hidden details.
                   </p>
                 </div>
+
+                {!apiKey && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-700 text-left flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-medium">API key required</p>
+                      <p className="mt-1 text-amber-600">
+                        You need an{' '}
+                        <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="underline font-medium">OpenRouter API key</a>
+                        {' '}to identify paintings. Tap the gear icon above to configure.
+                      </p>
+                    </div>
+                  </div>
+                )}
                 
                 <div className="flex flex-col gap-4 w-full max-w-xs mx-auto">
                   <button 
@@ -670,11 +735,99 @@ export default function App() {
 
       {/* Footer / Status */}
       <footer className="p-4 text-center text-[10px] text-stone-400 uppercase tracking-[0.2em] bg-white border-t border-stone-100">
-        Museum Guide AI • Powered by Gemini
+        Museum Guide AI • Powered by OpenRouter
       </footer>
 
       {/* Hidden Canvas for Capturing */}
       <canvas ref={canvasRef} className="hidden" />
+
+      {/* Settings Modal */}
+      <AnimatePresence>
+        {showSettings && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/50 backdrop-blur-sm" 
+              onClick={() => setShowSettings(false)} 
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="relative bg-white rounded-3xl shadow-2xl max-w-md w-full p-8 space-y-6"
+            >
+              <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-serif font-bold">Settings</h2>
+                <button 
+                  onClick={() => setShowSettings(false)} 
+                  className="text-stone-400 hover:text-stone-900 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              
+              <div className="space-y-5">
+                <div className="space-y-2">
+                  <label className="text-xs uppercase tracking-widest text-stone-400 font-bold block">
+                    OpenRouter API Key
+                  </label>
+                  <div className="relative">
+                    <input 
+                      type={showApiKey ? 'text' : 'password'}
+                      value={settingsApiKey}
+                      onChange={(e) => setSettingsApiKey(e.target.value)}
+                      placeholder="sk-or-..."
+                      className="w-full border border-stone-200 rounded-xl px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent"
+                    />
+                    <button 
+                      type="button"
+                      onClick={() => setShowApiKey(!showApiKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
+                    >
+                      {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <a 
+                    href="https://openrouter.ai/keys" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-xs text-stone-400 hover:text-stone-600 underline inline-block"
+                  >
+                    Get an API key from OpenRouter
+                  </a>
+                </div>
+                
+                <div className="space-y-2">
+                  <label className="text-xs uppercase tracking-widest text-stone-400 font-bold block">
+                    Model
+                  </label>
+                  <input 
+                    type="text"
+                    value={settingsModel}
+                    onChange={(e) => setSettingsModel(e.target.value)}
+                    placeholder={DEFAULT_MODEL}
+                    className="w-full border border-stone-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent"
+                  />
+                  <p className="text-xs text-stone-400">
+                    Any vision-capable model on{' '}
+                    <a href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer" className="underline">OpenRouter</a>
+                  </p>
+                </div>
+              </div>
+              
+              <button 
+                onClick={saveSettings}
+                disabled={!settingsApiKey.trim()}
+                className="w-full bg-stone-900 text-white py-3 rounded-xl font-medium hover:bg-stone-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
+              >
+                Save Settings
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
