@@ -1,0 +1,5 @@
+{
+  "name": "Museum Guide AI",
+  "description": "Identify paintings and learn about art history by taking a photo.",
+  "requestFramePermissions": ["camera"]
+}
