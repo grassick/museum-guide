@@ -293,7 +293,7 @@ Return only the JSON object, no other text.`;
           <div className="w-8 h-8 bg-stone-900 rounded-full flex items-center justify-center">
             <Sparkles className="text-white w-4 h-4" />
           </div>
-          <h1 className="font-serif text-xl font-semibold tracking-tight">Museum Guide AI</h1>
+          <h1 className="font-serif text-xl font-semibold tracking-tight">AI Museum Guide</h1>
         </div>
         <div className="flex items-center gap-4">
           <button 
