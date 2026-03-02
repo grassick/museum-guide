@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Camera, RefreshCw, Info, ArrowLeft, Sparkles, Loader2, AlertCircle, History, Trash2, Settings, Eye, EyeOff, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
-import { PaintingInfo, getAllHistory, saveHistoryItem, clearAllHistory, deleteHistoryItem } from './db';
+import { MuseumItem, getAllHistory, saveHistoryItem, clearAllHistory, deleteHistoryItem } from './db';
 
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_MODEL = 'google/gemini-2.0-flash-001';
@@ -13,8 +13,8 @@ const MODEL_STORAGE_KEY = 'museum_guide_openrouter_model';
 export default function App() {
   const [mode, setMode] = useState<'landing' | 'camera' | 'analyzing' | 'result' | 'history'>('landing');
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
-  const [analysis, setAnalysis] = useState<PaintingInfo | null>(null);
-  const [history, setHistory] = useState<PaintingInfo[]>([]);
+  const [analysis, setAnalysis] = useState<MuseumItem | null>(null);
+  const [history, setHistory] = useState<MuseumItem[]>([]);
   const [isDeepLoading, setIsDeepLoading] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +33,7 @@ export default function App() {
         // Migration from localStorage if it exists
         const saved = localStorage.getItem('museum_guide_history');
         if (saved) {
-          const oldHistory = JSON.parse(saved) as PaintingInfo[];
+          const oldHistory = JSON.parse(saved) as MuseumItem[];
           for (const item of oldHistory) {
             await saveHistoryItem(item);
           }
@@ -210,15 +210,16 @@ export default function App() {
 
     try {
       // PHASE 1: Basic Identification (Optimized for speed)
-      setLoadingStatus('Identifying artwork...');
-      const basicPrompt = `Identify this painting and provide basic details. You must respond with a JSON object containing exactly these fields:
-- "name" (string): Name of the painting
-- "artist" (string): Name of the artist
-- "year" (string): Year or period it was painted
-- "medium" (string): Materials used (e.g., Oil on canvas)
+      setLoadingStatus('Identifying exhibit...');
+      const basicPrompt = `Identify this museum exhibit and provide basic details. It could be a painting, sculpture, artifact, textile, ceramic, photograph, installation, or any other type of museum piece. You must respond with a JSON object containing exactly these fields:
+- "name" (string): Name of the item
+- "creator" (string): Name of the artist, craftsperson, or creator (use "Unknown" if unattributable)
+- "year" (string): Year, period, or date range it was created
+- "category" (string): Type of item (e.g., "Painting", "Sculpture", "Ceramic", "Textile", "Photograph", "Artifact", "Installation", "Manuscript", "Jewelry", etc.)
+- "medium" (string): Materials and methods used (e.g., "Oil on canvas", "Bronze", "Glazed ceramic", "Silver and gold")
 - "dimensions" (string): Physical dimensions if known
 - "location" (string): Museum or collection where it is housed
-- "description" (string): A brief, engaging overview of the painting
+- "description" (string): A brief, engaging overview of the item
 
 Return only the JSON object, no other text.`;
 
@@ -227,7 +228,7 @@ Return only the JSON object, no other text.`;
       setLoadingStatus('Parsing details...');
       const basicResult = JSON.parse(extractJSON(basicText));
       
-      const newEntry: PaintingInfo = {
+      const newEntry: MuseumItem = {
         ...basicResult,
         id: crypto.randomUUID(),
         timestamp: Date.now(),
@@ -241,11 +242,11 @@ Return only the JSON object, no other text.`;
 
       // PHASE 2: Deep Analysis (Background, more detail)
       try {
-        const deepPrompt = `Provide a deep analysis for the painting "${basicResult.name}" by ${basicResult.artist}. You must respond with a JSON object containing exactly these fields:
-- "technique" (string): Detailed analysis of the artist's style, brushwork, and artistic methods
-- "symbolism" (string): Hidden meanings and symbolic elements in the painting
-- "detailsToLookFor" (array of strings): 5-7 specific details a viewer should observe in the painting
-- "historicalContext" (string): The history, story, and significance behind the work
+        const deepPrompt = `Provide a deep analysis for the ${basicResult.category || 'museum item'} "${basicResult.name}" by ${basicResult.creator}. You must respond with a JSON object containing exactly these fields:
+- "technique" (string): Detailed analysis of the craftsmanship, artistic methods, and techniques used to create this piece
+- "symbolism" (string): Hidden meanings, symbolic elements, and iconographic significance
+- "detailsToLookFor" (array of strings): 5-7 specific details a viewer should observe when examining this piece
+- "historicalContext" (string): The history, story, and cultural significance behind the work
 
 Return only the JSON object, no other text.`;
         
@@ -271,7 +272,7 @@ Return only the JSON object, no other text.`;
         setError("Invalid API key. Please check your OpenRouter API key in Settings.");
       } else {
         const isQuotaError = err?.message?.includes('429') || err?.message?.includes('quota');
-        setError(isQuotaError ? "Museum archives are busy (Rate limit). Please wait a moment and try again." : "Failed to identify the painting. Please try again with a clearer photo.");
+        setError(isQuotaError ? "Museum archives are busy (Rate limit). Please wait a moment and try again." : "Failed to identify the item. Please try again with a clearer photo.");
       }
       setMode('landing');
     }
@@ -336,10 +337,10 @@ Return only the JSON object, no other text.`;
               <div className="max-w-md space-y-8">
                 <div className="space-y-4">
                   <h2 className="text-5xl font-serif leading-tight">
-                    Every painting has a <span className="italic">story</span>.
+                    Every exhibit has a <span className="italic">story</span>.
                   </h2>
                   <p className="text-stone-500 font-light text-lg">
-                    Point your camera at any artwork to uncover its history, secrets, and hidden details.
+                    Point your camera at any museum piece to uncover its history, secrets, and hidden details.
                   </p>
                 </div>
 
@@ -351,7 +352,7 @@ Return only the JSON object, no other text.`;
                       <p className="mt-1 text-amber-600">
                         You need an{' '}
                         <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="underline font-medium">OpenRouter API key</a>
-                        {' '}to identify paintings. Tap the gear icon above to configure.
+                        {' '}to identify museum items. Tap the gear icon above to configure.
                       </p>
                     </div>
                   </div>
@@ -422,7 +423,7 @@ Return only the JSON object, no other text.`;
 
               <div className="absolute top-6 left-0 right-0 text-center">
                 <span className="bg-black/40 backdrop-blur-md text-white px-4 py-2 rounded-full text-sm font-medium border border-white/10">
-                  Align painting in frame
+                  Align exhibit in frame
                 </span>
               </div>
             </motion.div>
@@ -487,7 +488,7 @@ Return only the JSON object, no other text.`;
                 <div className="flex justify-between items-end">
                   <div className="space-y-1">
                     <h2 className="text-3xl font-serif font-bold">Your Collection</h2>
-                    <p className="text-stone-500 text-sm">Artwork you've discovered</p>
+                    <p className="text-stone-500 text-sm">Exhibits you've discovered</p>
                   </div>
                   <button 
                     onClick={async () => {
@@ -538,8 +539,13 @@ Return only the JSON object, no other text.`;
                           <Trash2 className="w-4 h-4" />
                         </button>
                         <h3 className="font-serif font-bold text-lg truncate leading-tight pr-8">{item.name}</h3>
-                        <p className="text-stone-500 text-sm truncate pr-8">{item.artist}</p>
+                        <p className="text-stone-500 text-sm truncate pr-8">{item.creator}</p>
                         <div className="mt-2 flex items-center gap-2">
+                          {item.category && (
+                            <span className="text-[10px] uppercase tracking-widest text-stone-500 font-bold bg-stone-100 px-2 py-0.5 rounded-full">
+                              {item.category}
+                            </span>
+                          )}
                           <span className="text-[10px] uppercase tracking-widest text-stone-400 font-bold">
                             {new Date(item.timestamp).toLocaleDateString()}
                           </span>
@@ -577,13 +583,18 @@ Return only the JSON object, no other text.`;
                   )}
                 </div>
 
-                {/* Title & Artist */}
-                <div className="space-y-2 border-b border-stone-200 pb-6">
+                {/* Title & Creator */}
+                <div className="space-y-3 border-b border-stone-200 pb-6">
+                  {analysis.category && (
+                    <span className="inline-block text-[11px] uppercase tracking-widest text-stone-500 font-bold bg-stone-100 px-3 py-1 rounded-full">
+                      {analysis.category}
+                    </span>
+                  )}
                   <h2 className="text-4xl font-serif font-bold leading-tight">
                     {analysis.name}
                   </h2>
                   <div className="flex items-center gap-2 text-stone-500 text-lg">
-                    <span className="font-medium text-stone-900">{analysis.artist}</span>
+                    <span className="font-medium text-stone-900">{analysis.creator}</span>
                     <span>•</span>
                     <span>{analysis.year}</span>
                   </div>
@@ -609,7 +620,7 @@ Return only the JSON object, no other text.`;
                   </p>
                 </section>
 
-                {/* Technique & Symbolism */}
+                {/* Technique & Symbolism / Significance */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   <section className="space-y-4">
                     <div className="flex items-center gap-2 text-stone-400 uppercase tracking-widest text-xs font-bold">

@@ -3,13 +3,14 @@ const DB_NAME = 'MuseumGuideDB';
 const STORE_NAME = 'history';
 const DB_VERSION = 1;
 
-export interface PaintingInfo {
+export interface MuseumItem {
   id: string;
   timestamp: number;
   image: string;
   name: string;
-  artist: string;
+  creator: string;
   year: string;
+  category: string;
   medium: string;
   dimensions: string;
   location: string;
@@ -36,7 +37,13 @@ export const initDB = (): Promise<IDBDatabase> => {
   });
 };
 
-export const saveHistoryItem = async (item: PaintingInfo): Promise<void> => {
+const migrateItem = (item: any): MuseumItem => ({
+  ...item,
+  creator: item.creator || item.artist || 'Unknown',
+  category: item.category || 'Painting',
+});
+
+export const saveHistoryItem = async (item: MuseumItem): Promise<void> => {
   const db = await initDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
@@ -47,14 +54,14 @@ export const saveHistoryItem = async (item: PaintingInfo): Promise<void> => {
   });
 };
 
-export const getAllHistory = async (): Promise<PaintingInfo[]> => {
+export const getAllHistory = async (): Promise<MuseumItem[]> => {
   const db = await initDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readonly');
     const store = transaction.objectStore(STORE_NAME);
     const request = store.getAll();
     request.onsuccess = () => {
-      const results = request.result as PaintingInfo[];
+      const results = (request.result as any[]).map(migrateItem);
       resolve(results.sort((a, b) => b.timestamp - a.timestamp));
     };
     request.onerror = () => reject(request.error);
